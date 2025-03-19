@@ -17,6 +17,7 @@ from scipy.spatial import ConvexHull
 from tqdm import tqdm
 from os.path import exists, join
 from os import listdir
+import os
 
 
 class urban_object:
@@ -218,7 +219,7 @@ def RF_classification(X, y):
 if __name__=='__main__':
     # specify the data folder
     """"Here you need to specify your own path"""
-    path = '../Data/pointclouds'
+    path = os.getcwd() + "/pointclouds-500/pointclouds-500"
 
     # conduct feature preparation
     print('Start preparing features')

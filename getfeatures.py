@@ -1,0 +1,90 @@
+import numpy as np
+from sklearn.utils import Bunch
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+
+def read_xyz(filenm):
+    """
+    :param filenm: name of the file
+    :return: points
+    """
+    points = []
+    with open(filenm, 'r') as f_input:
+        for line in f_input:
+            p = line.split()
+            p = [float(i) for i in p]
+            points.append(p)
+    points = np.array(points).astype(np.float32)
+    return points
+
+def planarity(l1, l2, l3):
+    return (l2 - l3)/l1
+
+def linearity(l1, l2, l3):
+    return (l1 - l2)/l1
+
+def spherecity(l1, l2, l3):
+    return l3/l1
+
+def find_eigens(points):
+    """
+    Determine eigenvalues from file
+    :param points: array as Nx3
+    :return: eigenvalues [l1, l2, l3]
+    """
+
+    # Center the points for mean to be at the origin
+    centered_points = points - np.mean(points, axis=0)
+
+    # Compute covariance matrix
+    covariance_matrix = np.cov(centered_points, rowvar=False)
+
+    # Eigenvalues
+    eigenvalues, _ = np.linalg.eigh(covariance_matrix)
+
+    return np.sort(eigenvalues)[::-1]
+
+def get_max_z(points):
+    max_z = 0
+    for pt in points:
+        if pt[2] > max_z:
+            max_z = pt[2]
+
+    return max_z
+
+# Define paths
+data_path = os.getcwd() + '/pointclouds-500/pointclouds-500'
+files = sorted([f for f in os.listdir(data_path) if f.endswith('.xyz')])
+
+# Define metadata
+target_names = np.array(['building', 'car', 'fence', 'pole', 'tree'])
+feature_names = np.array(['Linearity', 'Planarity', 'Spherecity', 'Maximum z'])
+targets = np.repeat(np.arange(1, 6), 100)
+
+feature_count = 4
+
+# Initialize Bunch
+lidar = Bunch(data=np.zeros((500, feature_count), dtype=float),
+              target_names=target_names,
+              feature_names=feature_names,
+              targets=targets)
+
+# Process each file
+for i, file in enumerate(files):
+    points = read_xyz(os.path.join(data_path, file))
+    l1, l2, l3 = find_eigens(points)
+
+    # Compute & push features
+    entry = [linearity(l1, l2, l3), planarity(l1, l2, l3), spherecity(l1, l2, l3), get_max_z(points)]
+    lidar['data'][i] = entry
+
+
+
+
+#Plot
+lidar_df = pd.DataFrame(lidar['data'], columns = lidar['feature_names'])
+pd.plotting.scatter_matrix(lidar_df, c=lidar['targets'], figsize=(15, 15),
+                           marker='o', hist_kwds={'bins': 20}, s=60,
+                           alpha=.8)
+plt.show()
