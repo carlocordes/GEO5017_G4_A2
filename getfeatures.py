@@ -1,5 +1,10 @@
 import numpy as np
+from sklearn.metrics import f1_score
+
 from sklearn.utils import Bunch
+from sklearn import svm
+import sklearn.model_selection as model_selection
+
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
@@ -53,6 +58,14 @@ def get_max_z(points):
 
     return max_z
 
+def visualize_features():
+        # Plot
+        lidar_df = pd.DataFrame(lidar['data'], columns=lidar['feature_names'])
+        pd.plotting.scatter_matrix(lidar_df, c=lidar['targets'], figsize=(15, 15),
+                                   marker='o', hist_kwds={'bins': 20}, s=60,
+                                   alpha=.8)
+        plt.show()
+
 # Define paths
 data_path = os.getcwd() + '/pointclouds-500/pointclouds-500'
 files = sorted([f for f in os.listdir(data_path) if f.endswith('.xyz')])
@@ -78,13 +91,28 @@ for i, file in enumerate(files):
     # Compute & push features
     entry = [linearity(l1, l2, l3), planarity(l1, l2, l3), spherecity(l1, l2, l3), get_max_z(points)]
     lidar['data'][i] = entry
+#visualize_features()
 
 
+# Multi-class SVM Classification
+ratio = 0.7
+X_train, X_test, y_train, y_test = model_selection.train_test_split(lidar['data'], lidar['targets'],
+                                                                    train_size = ratio, test_size=0.3,
+                                                                    random_state= 0
+                                                                    )
 
+rbf = svm.SVC(kernel='rbf', gamma=0.8, C=0.1).fit(X_train, y_train)
+poly = svm.SVC(kernel='poly', degree=5, C=1).fit(X_train, y_train)
 
-#Plot
-lidar_df = pd.DataFrame(lidar['data'], columns = lidar['feature_names'])
-pd.plotting.scatter_matrix(lidar_df, c=lidar['targets'], figsize=(15, 15),
-                           marker='o', hist_kwds={'bins': 20}, s=60,
-                           alpha=.8)
-plt.show()
+poly_pred = poly.predict(X_test)
+rbf_pred = rbf.predict(X_test)
+
+poly_f1 = f1_score(y_test, poly_pred, average='weighted')
+rbf_f1 = f1_score(y_test, rbf_pred, average='weighted')
+
+print("Test set score (RBF): {:.5f}".format(np.mean(rbf_pred == y_test)))
+print("F1 score (RBF): {:.5f}".format(rbf_f1))
+print("Test set score (POLY): {:.5f}".format(np.mean(poly_pred == y_test)))
+print("F1 score (POLY): {:.5f}".format(poly_f1))
+
+# Random Forest Classification
