@@ -14,6 +14,10 @@ import os
 import matplotlib.pyplot as plt
 
 
+# Possible features
+# Scatter (std) in x,y -> poles
+# Scatter (std) in x or y -> fences
+# Root density
 
 def tsne_graph(bunch):
     df = pd.DataFrame(bunch['data'], columns = bunch['feature_names'])
@@ -56,11 +60,6 @@ def read_xyz(filenm):
     points = np.array(points).astype(np.float32)
     return points
 
-# Possible features
-# Scatter (std) in x,y -> poles
-# Scatter (std) in x or y -> fences
-# Root density
-
 def root_count(points):
     # Lowest point
     root = points[[np.argmin(points[:, 2])]]
@@ -82,12 +81,12 @@ def planarity(l1, l2, l3):
     return (l2 - l3)/l1
 
 def linearity(l1, l2, l3):
-    return (l1 - l2)/l1
+    return (l1 - l2)/(l1+ 1e-5)
 
 def spherecity(l1, l2, l3):
-    return l3/l1
+    return l3/(l1+ 1e-5)
 
-def find_eigens2(points):
+def find_eigens(points):
     k_top = max(int(len(points) * 0.005), 100)
     top = points[[np.argmax(points[:, 2])]]
 
@@ -99,24 +98,6 @@ def find_eigens2(points):
     w, _ = np.linalg.eig(cov)
 
     return np.sort(w)[::-1]
-
-def find_eigens(points):
-    """
-    Determine eigenvalues from file
-    :param points: array as Nx3
-    :return: eigenvalues [l1, l2, l3]
-    """
-
-    # Center the points for mean to be at the origin
-    centered_points = points - np.mean(points, axis=0)
-
-    # Compute covariance matrix
-    covariance_matrix = np.cov(centered_points, rowvar=False)
-
-    # Eigenvalues
-    eigenvalues, _ = np.linalg.eigh(covariance_matrix)
-
-    return np.sort(eigenvalues)[::-1]
 
 def height(points):
     max_z = np.amax(points[:, 2])
@@ -134,10 +115,54 @@ def root_density(points):
     root_density = 1.0*count[0] / len(points)
     return root_density
 
-if __name__ == '__main__':
+def perform_svm(bunch, ratio, kernel = 'rbf', print_cf = True):
+    """
+    Perform SVM
+    :param bunch:
+    :param ratio:
+    :param print_cf: bool, printing confusion matrix
+    :return:
+    """
+    # Split in training & testing data
+    X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                        train_size = ratio,
+                                                                        )
+    # Multi-class SVM Classification
+    rbf = svm.SVC(kernel = kernel, gamma=1, C=0.1).fit(X_train, y_train)
+    rbf_pred = rbf.predict(X_test)
+
+    #rbf_f1 = f1_score(y_test, rbf_pred, average='weighted')
+
+    score = np.mean(rbf_pred == y_test)
+
+    if print_cf:
+        print(confusion_matrix(y_true=y_test, y_pred=rbf_pred))
+
+    return score
+
+def out_learning_rate(bunch, method, kernel = False):
+    ratios = np.linspace(0.1, 0.95, 18)
+
+    set_scores = []
+    for ratio in ratios:
+        set_value = 0
+        iterations = 20
+        for i in range(iterations):
+            set_value += method(bunch, ratio, kernel, False)
+        set_value /= iterations
+        set_scores.append(set_value)
+
+    plt.plot(ratios, set_scores)
+    plt.title('Learning Curve')
+    plt.xlabel('Training Set Ratio')
+    plt.ylabel('Training Set Score')
+    plt.grid()
+    plt.show()
+
+def classify(pathname):
 
     # Define paths
-    data_path = os.getcwd() + '/pointclouds-500/pointclouds-500'
+    data_path = os.getcwd() + pathname
     files = sorted([f for f in os.listdir(data_path) if f.endswith('.xyz')])
 
     # Define metadata
@@ -148,48 +173,36 @@ if __name__ == '__main__':
     feature_count = 5
 
     # Initialize Bunch
-    lidar = Bunch(data=np.zeros((500, feature_count), dtype=float),
+    data_bunch = Bunch(data=np.zeros((500, feature_count), dtype=float),
                   target_names=target_names,
                   feature_names=feature_names,
                   targets=targets)
 
-    # Process each file
+    # Gather feature values
     for i, file in enumerate(files):
         points = read_xyz(os.path.join(data_path, file))
-        l1, l2, l3 = find_eigens2(points)
+        l1, l2, l3 = find_eigens(points)
 
         # Compute & push features
         entry = [linearity(l1, l2, l3), spherecity(l1, l2, l3), height(points), root_density(points), hull_area(points)]
-        lidar['data'][i] = entry
+        data_bunch['data'][i] = entry
 
-    # Split in training & testing data
-    ratio = 0.6
-    X_train, X_test, y_train, y_test = model_selection.train_test_split(lidar['data'], lidar['targets'],
-                                                                        train_size = ratio, test_size = 1.0 - ratio,
-                                                                        random_state = 101
-                                                                        )
-    # Multi-class SVM Classification
-    rbf = svm.SVC(kernel='rbf', gamma=1, C=0.1).fit(X_train, y_train)
-    poly = svm.SVC(kernel='poly', degree=5, C=1).fit(X_train, y_train)
+    return data_bunch
 
-    poly_pred = poly.predict(X_test)
-    rbf_pred = rbf.predict(X_test)
+if __name__ == '__main__':
 
-    poly_f1 = f1_score(y_test, poly_pred, average='weighted')
-    rbf_f1 = f1_score(y_test, rbf_pred, average='weighted')
+    lidar = classify('/pointclouds-500/pointclouds-500')
+    # Single Run
+    score = perform_svm(lidar, 0.7, 'poly', True)
+    print("Training Set Score: {:.2f}".format(score))
 
-    print("Test set score (RBF): {:.5f}".format(np.mean(rbf_pred == y_test)))
-    #print("F1 score (RBF): {:.5f}".format(rbf_f1))
-    print("Test set score (POLY): {:.5f}".format(np.mean(poly_pred == y_test)))
-    #print("F1 score (POLY): {:.5f}".format(poly_f1))
-
-
+    # Multiple runs
+    #out_learning_rate(lidar, perform_svm, 'poly')
 
     #visualize_features()
-    print(confusion_matrix(y_true = y_test, y_pred = rbf_pred))
     #tsne_graph(lidar)
 
     #TODO:
     # Random Forest Classification
     # Learning Curve
-
+    # Hyperparamter Tuning (A2 Intro slides)
