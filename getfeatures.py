@@ -7,6 +7,7 @@ from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 import sklearn.model_selection as model_selection
 from sklearn.neighbors import KDTree
+from sklearn.ensemble import RandomForestClassifier
 
 from scipy.spatial import ConvexHull
 import pandas as pd
@@ -140,9 +141,30 @@ def perform_svm(bunch, ratio, kernel = 'rbf', print_cf = True):
 
     return score
 
-def out_learning_rate(bunch, method, kernel = False):
-    ratios = np.linspace(0.1, 0.95, 18)
+def perform_rf(bunch, ratio, kernel = None, print_cf = True):
+    """
+    Performs Random Forest Classification at given training ratio
+    :param bunch: data to perform RF on
+    :param ratio: training ratio of total data set
+    :param print_cf: Whether to print confusion matrix
+    :return:
+    """
+    X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                        train_size = ratio)
 
+    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf.fit(X_train, y_train)
+    rf_pred = clf.predict(X_test)
+    score = np.mean(rf_pred == y_test)
+
+    if print_cf:
+        print(confusion_matrix(y_true = y_test, y_pred = rf_pred))
+
+    return score
+
+def out_learning_rate(bunch, method, kernel = False):
+
+    ratios = np.linspace(0.1, 0.95, 18)
     set_scores = []
     for ratio in ratios:
         set_value = 0
@@ -191,16 +213,25 @@ def classify(pathname):
 
 if __name__ == '__main__':
 
+    # Classify
     lidar = classify('/pointclouds-500/pointclouds-500')
-    # Single Run
-    score = perform_svm(lidar, 0.7, 'poly', True)
-    print("Training Set Score: {:.2f}".format(score))
 
-    # Multiple runs
+    # Single SMV Run
+    #score = perform_svm(lidar, 0.7, 'poly', True)
+    #print("Training Set Score: {:.2f}".format(score))
+
+    # Multiple SVM Runs
     #out_learning_rate(lidar, perform_svm, 'poly')
 
     #visualize_features()
     #tsne_graph(lidar)
+
+    # Single RF Run
+    rf_score = perform_rf(lidar, 0.7, None, True)
+    print("Random Forest Training Set Score: {:.2}".format(rf_score))
+
+    # Multiple RF Runs
+    out_learning_rate(lidar, perform_rf, None)
 
     #TODO:
     # Random Forest Classification
