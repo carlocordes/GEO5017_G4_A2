@@ -206,12 +206,28 @@ def classify(pathname):
                  hull, density]
         data_bunch['data'][i] = np.array(entry).flatten()
 
-    return data_bunch
+    J_values = J_feature(data_bunch)
+    features_desc = sorted(J_values.items(), key=lambda x: x[1], reverse=True)
+
+    # Select the top 5 features based on the J-values
+    top_5_features = [features_desc[i][0] for i in range(5)]
+    
+    # Get the indices of the top 5 features
+    top_5_feature_indices = [data_bunch['feature_names'].tolist().index(f) for f in top_5_features]
+    
+    # Create a new Bunch with only the top 5 features
+    final_bunch = Bunch(
+        data=data_bunch['data'][:, top_5_feature_indices],  
+        target_names=data_bunch['target_names'],
+        feature_names=top_5_features,
+        targets=data_bunch['targets']
+    )
+    print('Final features selected based on J value:')
+    print(features_desc[0:4])
+    return final_bunch
 
 if __name__ == '__main__':
     lidar = classify('/pointclouds-500/pointclouds-500')
-    J = J_SwSb(lidar)
-    print(J_feature(lidar))
 
     # tsne_visualisation(lidar)
 
