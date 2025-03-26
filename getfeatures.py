@@ -115,7 +115,7 @@ def root_density(points):
     root_density = 1.0*count[0] / len(points)
     return root_density
 
-def perform_svm(bunch, ratio, kernel = 'rbf', print_cf = True):
+def perform_svm(bunch, ratio, kernel = 'rbf', gamma = 1, C = 0.1, print_cf = True, random = 42):
     """
     Perform SVM
     :param bunch:
@@ -125,9 +125,9 @@ def perform_svm(bunch, ratio, kernel = 'rbf', print_cf = True):
     """
     # Split in training & testing data
     X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
-                                                                        train_size = ratio)
+                                                                        train_size = ratio, random_state = random)
     # Multi-class SVM Classification
-    model = svm.SVC(kernel = kernel, gamma=1, C=0.1).fit(X_train, y_train)
+    model = svm.SVC(kernel = kernel, gamma = gamma, C = C).fit(X_train, y_train)
     svm_pred = model.predict(X_test)
 
     #rbf_f1 = f1_score(y_test, rbf_pred, average='weighted')
@@ -168,20 +168,56 @@ def perform_rf(bunch, ratio, kernel, print_cf = True):
 
     return score
 
-def out_learning_rate(bunch, method, kernel = False):
+def out_learning_rate(bunch, method, gamma = 1, C = 0.1, kernel = False):
 
     ratios = np.linspace(0.1, 0.95, 18)
     set_scores = []
     for ratio in ratios:
         set_value = 0
-        smoothing = 10
+        smoothing = 20
         for i in range(smoothing):
-            set_value += method(bunch, ratio, kernel, False)
+            set_value += method(bunch, ratio, kernel, gamma, C, False, None)
         set_value /= smoothing
         set_scores.append(set_value)
 
     # Send to plot
     plt.plot(ratios, set_scores, label = kernel)
+
+def learning_curve(bunch, method, par1 = 1, par2 = 0.1, kernel = False):
+
+    true_errors = [] # True error -> based on testing data
+    app_errors = [] # Apparent error -> based on training data
+    ratios = np.linspace(0.1, 0.95, 18)
+
+
+
+    iterations = 10
+    for ratio in ratios:
+        true_score = 0
+        app_score = 0
+        for i in range(iterations):
+            X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                                train_size = ratio, random_state = None)
+
+            model = svm.SVC(kernel = kernel, gamma = par1, C = par2).fit(X_train, y_train)
+
+            true_error = 1 - np.mean(y_test == model.predict(X_test))
+            app_error = 1 - np.mean(y_train == model.predict(X_train))
+
+            true_score += true_error
+            app_score += app_error
+
+        true_score /= iterations
+        app_score /= iterations
+
+        true_errors.append(true_score)
+        app_errors.append(app_score)
+
+    print(true_errors)
+    print(app_errors)
+
+    plt.plot(ratios, true_errors, label= "True error")
+    plt.plot(ratios, app_errors, label = " Apparent error")
 
 def classify(pathname):
 
@@ -278,8 +314,9 @@ def height(points):
     z = points[:,2]
     height_mean = np.mean(z)
     height_var = np.var(z)
+    height_std = np.std(z)
     height_range = np.max(z) - np.min(z)
-    return height_mean, height_var, height_range
+    return height_mean, height_var, height_range, height_std
 
 def classify_mj(pathname):
 
@@ -292,7 +329,7 @@ def classify_mj(pathname):
     feature_names = np.array(['Top Linearity', 'Top Planarity', 'Top Linearity',
                               'Btm Linearity', 'Btm Planarity', 'Btm Linearity',
                               'Mean Height', 'Height Variance', 'Height Range',
-                              'Hull Area', 'Root Density'])
+                              'Height Std', 'Hull Area', 'Root Density'])
     targets = np.repeat(np.arange(1, 6), 100)
 
     feature_count = feature_names.size
@@ -316,12 +353,12 @@ def classify_mj(pathname):
         hull = hull_area(points)
         density = root_density(points)
 
-        height_mean, height_var, height_range = height(points)
+        height_mean, height_var, height_range, height_std = height(points)
 
         # Compute & push features
         entry = [top_linearity, top_planarity, top_sphericity,
                  btm_linearity, btm_planarity, btm_sphericity,
-                 height_mean, height_var, height_range,
+                 height_mean, height_var, height_range, height_std,
                  hull, density]
         data_bunch['data'][i] = np.array(entry).flatten()
 
@@ -342,21 +379,62 @@ def classify_mj(pathname):
     #print(features_desc[0:3])
     return final_bunch
 
+def SVM_grid_search(bunch, kernel):
+    """
+    Grid search for best C and gamma in Poly SVM
+    """
+    C_values = [0.001, 0.01, 0.1, 1]
+    gamma_values = [1, 2, 3, 4]
+
+    best_f1 = 0
+    best_params = {}
+
+    print("Starting Grid Search for Poly SVM...\n")
+    for C in C_values:
+        for gamma in gamma_values:
+            # 1. Train-test split
+            X_train, X_test, y_train, y_test = model_selection.train_test_split(
+                bunch['data'], bunch['targets'], train_size=0.6, random_state=42)
+
+            # 2. Create model with current parameters
+            model = svm.SVC(kernel = kernel, C = C, gamma = gamma)
+
+            # 3. Train & predict
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+
+            # 4. Evaluate
+            acc = np.mean(y_pred == y_test)
+            f1 = f1_score(y_test, y_pred, average='weighted')
+
+            print(f"C={C}, gamma = {gamma} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
+
+            if f1 > best_f1:
+                best_f1 = f1
+                best_params = {'C': C, 'gamma': gamma}
+
+    #print("\nBest Hyperparameters (Poly SVM):")
+    #print(f"Best F1 Score: {best_f1:.2f}")
+    #print(f"Best Params: {best_params}")
+    return best_params
+
 
 if __name__ == '__main__':
 
     # Classify
     lidar = classify_mj('/pointclouds-500/pointclouds-500')
+    print(lidar['feature_names'])
 
     # Optimize hyperparameters
-
+    best_params = SVM_grid_search(lidar, 'poly')
 
     # Single SMV Run
     #score = perform_svm(lidar, 0.7, 'poly', False)
     #print("Training Set Score: {:.2f}".format(score))
-    """
+
     # Multiple SVM Runs
-    out_learning_rate(lidar, perform_svm, 'poly')
+    learning_curve(lidar, 'svm', best_params['gamma'], best_params['C'], 'poly')
+    """
     out_learning_rate(lidar, perform_svm, 'linear')
     out_learning_rate(lidar, perform_svm, 'sigmoid')
     out_learning_rate(lidar, perform_svm, 'rbf')
@@ -374,14 +452,9 @@ if __name__ == '__main__':
     #out_learning_rate(lidar, perform_rf, 'entropy')
     #out_learning_rate(lidar, perform_rf, 'gini')
 
-
-    """
     plt.title('Learning Curve')
     plt.xlabel('Training Set Ratio')
     plt.ylabel('Training Set Score')
     plt.legend()
     plt.grid()
     plt.show()
-    """
-    #TODO:
-    # Hyperparamter Tuning (A2 Intro slides)
