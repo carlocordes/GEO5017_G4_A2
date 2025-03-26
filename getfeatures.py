@@ -1,19 +1,18 @@
+import os
 import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from scipy.spatial import ConvexHull
 
 from sklearn import svm
-from sklearn.metrics import f1_score, confusion_matrix
+from sklearn.metrics import f1_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.utils import Bunch
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 import sklearn.model_selection as model_selection
 from sklearn.neighbors import KDTree
 from sklearn.ensemble import RandomForestClassifier
-
-from scipy.spatial import ConvexHull
-import pandas as pd
-import os
-import matplotlib.pyplot as plt
-
 
 # Possible features
 # Scatter (std) in x,y -> poles
@@ -100,7 +99,7 @@ def find_eigens(points):
 
     return np.sort(w)[::-1]
 
-def height(points):
+def height_diff(points):
     max_z = np.amax(points[:, 2])
     min_z = np.amin(points[:, 2])
     return max_z - min_z
@@ -126,22 +125,29 @@ def perform_svm(bunch, ratio, kernel = 'rbf', print_cf = True):
     """
     # Split in training & testing data
     X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
-                                                                        train_size = ratio,
-                                                                        )
+                                                                        train_size = ratio)
     # Multi-class SVM Classification
-    rbf = svm.SVC(kernel = kernel, gamma=1, C=0.1).fit(X_train, y_train)
-    rbf_pred = rbf.predict(X_test)
+    model = svm.SVC(kernel = kernel, gamma=1, C=0.1).fit(X_train, y_train)
+    svm_pred = model.predict(X_test)
 
     #rbf_f1 = f1_score(y_test, rbf_pred, average='weighted')
 
-    score = np.mean(rbf_pred == y_test)
+    score = np.mean(svm_pred == y_test)
 
     if print_cf:
-        print(confusion_matrix(y_true=y_test, y_pred=rbf_pred))
+        # Compute the confusion matrix
+        cm = confusion_matrix(y_test, svm_pred)
+        #print(cm)
+
+        # Plot the confusion matrix
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=lidar['target_names'])
+        disp.plot(cmap=plt.cm.Blues)
+        plt.title('Confusion Matrix SVM ' + kernel)
+        plt.show()
 
     return score
 
-def perform_rf(bunch, ratio, kernel = None, print_cf = True):
+def perform_rf(bunch, ratio, kernel, print_cf = True):
     """
     Performs Random Forest Classification at given training ratio
     :param bunch: data to perform RF on
@@ -152,7 +158,7 @@ def perform_rf(bunch, ratio, kernel = None, print_cf = True):
     X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
                                                                         train_size = ratio)
 
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf = RandomForestClassifier(n_estimators=100, criterion= kernel)
     clf.fit(X_train, y_train)
     rf_pred = clf.predict(X_test)
     score = np.mean(rf_pred == y_test)
@@ -168,18 +174,14 @@ def out_learning_rate(bunch, method, kernel = False):
     set_scores = []
     for ratio in ratios:
         set_value = 0
-        iterations = 20
-        for i in range(iterations):
+        smoothing = 10
+        for i in range(smoothing):
             set_value += method(bunch, ratio, kernel, False)
-        set_value /= iterations
+        set_value /= smoothing
         set_scores.append(set_value)
 
-    plt.plot(ratios, set_scores)
-    plt.title('Learning Curve')
-    plt.xlabel('Training Set Ratio')
-    plt.ylabel('Training Set Score')
-    plt.grid()
-    plt.show()
+    # Send to plot
+    plt.plot(ratios, set_scores, label = kernel)
 
 def classify(pathname):
 
@@ -206,34 +208,180 @@ def classify(pathname):
         l1, l2, l3 = find_eigens(points)
 
         # Compute & push features
-        entry = [linearity(l1, l2, l3), spherecity(l1, l2, l3), height(points), root_density(points), hull_area(points)]
+        entry = [linearity(l1, l2, l3), spherecity(l1, l2, l3), height_diff(points),
+                 root_density(points), hull_area(points)]
         data_bunch['data'][i] = entry
 
     return data_bunch
 
+def J_SwSb(data_bunch):
+    data = data_bunch['data']
+    labels = data_bunch['targets']
+    feature_count = len(data_bunch['feature_names'])
+
+    overall_mean = np.mean(data, axis=0)
+
+    Sw = np.zeros((feature_count, feature_count))
+    Sb = np.zeros((feature_count, feature_count))
+
+    for c in range(1, 6):
+        class_data = data[labels == c]
+        class_mean = np.mean(class_data, axis=0)
+
+        Sw += np.dot((class_data - class_mean).T, (class_data - class_mean))
+
+        num_samples = class_data.shape[0]
+        mean_diff = (class_mean - overall_mean).reshape(feature_count, 1)
+        Sb += num_samples * np.dot(mean_diff, mean_diff.T)
+
+    J = np.trace(Sb) / np.trace(Sw) if np.trace(Sw) != 0 else np.inf
+    return J
+
+def J_feature(data_bunch):
+    data = data_bunch['data']
+    labels = data_bunch['targets']
+    feature_names = data_bunch['feature_names']
+
+    J_values = {}
+
+    for i, feature in enumerate(feature_names):
+        feature_data = data[:, i].reshape(-1, 1)  # Select only one feature
+
+        # Create a temporary Bunch with a single feature
+        temp_bunch = {'data': feature_data, 'targets': labels, 'feature_names': [feature]}
+
+        J = J_SwSb(temp_bunch)
+        J_values[feature] = J
+
+    return J_values
+
+def eigenvalue_derivatives(points, point, kdtree, k):
+    _, idx = kdtree.query(point, k=k)
+    neighbours = points[np.unique(idx)]
+    cov_matrix = np.cov(neighbours.T)
+    eigen_values, _ = np.linalg.eig(cov_matrix)
+    eigen_values = np.sort(eigen_values)[::-1]
+
+    l1 = eigen_values[0]
+    l2 = eigen_values[1]
+    l3 = eigen_values[2]
+
+    if l1 == 0:
+        return 0, 0, 0
+
+    linearity = (l1 - l2) / l1
+    planarity = (l2 - l3) / l1
+    sphericity = l3 / l1
+    return linearity, planarity, sphericity
+
+def height(points):
+    z = points[:,2]
+    height_mean = np.mean(z)
+    height_var = np.var(z)
+    height_range = np.max(z) - np.min(z)
+    return height_mean, height_var, height_range
+
+def classify_mj(pathname):
+
+    # Define paths
+    data_path = os.getcwd() + pathname
+    files = sorted([f for f in os.listdir(data_path) if f.endswith('.xyz')])
+
+    # Define metadata
+    target_names = np.array(['building', 'car', 'fence', 'pole', 'tree'])
+    feature_names = np.array(['Top Linearity', 'Top Planarity', 'Top Linearity',
+                              'Btm Linearity', 'Btm Planarity', 'Btm Linearity',
+                              'Mean Height', 'Height Variance', 'Height Range',
+                              'Hull Area', 'Root Density'])
+    targets = np.repeat(np.arange(1, 6), 100)
+
+    feature_count = feature_names.size
+
+    # Initialize Bunch
+    data_bunch = Bunch(data=np.zeros((500, feature_count), dtype=float),
+                  target_names=target_names,
+                  feature_names=feature_names,
+                  targets=targets)
+
+    # Gather feature values
+    for i, file in enumerate(files):
+        points = read_xyz(os.path.join(data_path, file))
+        kdtree = KDTree(points)
+        k = max(int(len(points) * 0.005), 100)
+
+        top_most = points[[np.argmax(points[:, 2])]]
+        btm_most = points[[np.argmin(points[:, 2])]]
+        top_linearity, top_planarity, top_sphericity = eigenvalue_derivatives(points, top_most, kdtree, k)
+        btm_linearity, btm_planarity, btm_sphericity = eigenvalue_derivatives(points, btm_most, kdtree, k)
+        hull = hull_area(points)
+        density = root_density(points)
+
+        height_mean, height_var, height_range = height(points)
+
+        # Compute & push features
+        entry = [top_linearity, top_planarity, top_sphericity,
+                 btm_linearity, btm_planarity, btm_sphericity,
+                 height_mean, height_var, height_range,
+                 hull, density]
+        data_bunch['data'][i] = np.array(entry).flatten()
+
+    J_values = J_feature(data_bunch)
+    features_desc = sorted(J_values.items(), key=lambda x: x[1], reverse=True)
+
+    # Select the top 4 features based on the J-values
+    top_4_features = [features_desc[i][0] for i in range(4)]
+    top_4_feature_indices = [data_bunch['feature_names'].tolist().index(f) for f in top_4_features]
+
+    final_bunch = Bunch(
+        data=data_bunch['data'][:, top_4_feature_indices],
+        target_names=data_bunch['target_names'],
+        feature_names=top_4_features,
+        targets=data_bunch['targets']
+    )
+    #print('Final features selected based on J value:')
+    #print(features_desc[0:3])
+    return final_bunch
+
+
 if __name__ == '__main__':
 
     # Classify
-    lidar = classify('/pointclouds-500/pointclouds-500')
+    lidar = classify_mj('/pointclouds-500/pointclouds-500')
+
+    # Optimize hyperparameters
+
 
     # Single SMV Run
-    #score = perform_svm(lidar, 0.7, 'poly', True)
+    #score = perform_svm(lidar, 0.7, 'poly', False)
     #print("Training Set Score: {:.2f}".format(score))
-
+    """
     # Multiple SVM Runs
-    #out_learning_rate(lidar, perform_svm, 'poly')
+    out_learning_rate(lidar, perform_svm, 'poly')
+    out_learning_rate(lidar, perform_svm, 'linear')
+    out_learning_rate(lidar, perform_svm, 'sigmoid')
+    out_learning_rate(lidar, perform_svm, 'rbf')
+    """
+
 
     #visualize_features()
     #tsne_graph(lidar)
 
     # Single RF Run
-    rf_score = perform_rf(lidar, 0.7, None, True)
-    print("Random Forest Training Set Score: {:.2}".format(rf_score))
+    #rf_score = perform_rf(lidar, 0.7, 'entropy', True)
+    #print("Random Forest Training Set Score: {:.2}".format(rf_score))
 
     # Multiple RF Runs
-    out_learning_rate(lidar, perform_rf, None)
+    #out_learning_rate(lidar, perform_rf, 'entropy')
+    #out_learning_rate(lidar, perform_rf, 'gini')
 
+
+    """
+    plt.title('Learning Curve')
+    plt.xlabel('Training Set Ratio')
+    plt.ylabel('Training Set Score')
+    plt.legend()
+    plt.grid()
+    plt.show()
+    """
     #TODO:
-    # Random Forest Classification
-    # Learning Curve
     # Hyperparamter Tuning (A2 Intro slides)
