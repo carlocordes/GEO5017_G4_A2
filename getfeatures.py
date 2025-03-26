@@ -14,10 +14,6 @@ import sklearn.model_selection as model_selection
 from sklearn.neighbors import KDTree
 from sklearn.ensemble import RandomForestClassifier
 
-# Possible features
-# Scatter (std) in x,y -> poles
-# Scatter (std) in x or y -> fences
-# Root density
 
 def tsne_graph(bunch):
     df = pd.DataFrame(bunch['data'], columns = bunch['feature_names'])
@@ -189,8 +185,6 @@ def learning_curve(bunch, method, par1 = 1, par2 = 0.1, kernel = False):
     app_errors = [] # Apparent error -> based on training data
     ratios = np.linspace(0.1, 0.95, 18)
 
-
-
     iterations = 10
     for ratio in ratios:
         true_score = 0
@@ -212,9 +206,6 @@ def learning_curve(bunch, method, par1 = 1, par2 = 0.1, kernel = False):
 
         true_errors.append(true_score)
         app_errors.append(app_score)
-
-    print(true_errors)
-    print(app_errors)
 
     plt.plot(ratios, true_errors, label= "True error")
     plt.plot(ratios, app_errors, label = " Apparent error")
@@ -379,43 +370,71 @@ def classify_mj(pathname):
     #print(features_desc[0:3])
     return final_bunch
 
-def SVM_grid_search(bunch, kernel):
+def grid_search(bunch, classifier):
     """
-    Grid search for best C and gamma in Poly SVM
+
     """
-    C_values = [0.001, 0.01, 0.1, 1]
-    gamma_values = [1, 2, 3, 4]
+    if classifier == 'SVM':
+        kernels = ['linear', 'rbf', 'poly']
+        C_values = [0.001, 0.01, 0.1, 1]
+        gamma_values = [1, 2, 3, 4]
 
-    best_f1 = 0
-    best_params = {}
+        best_f1 = 0
+        best_params = {}
 
-    print("Starting Grid Search for Poly SVM...\n")
-    for C in C_values:
-        for gamma in gamma_values:
-            # 1. Train-test split
-            X_train, X_test, y_train, y_test = model_selection.train_test_split(
-                bunch['data'], bunch['targets'], train_size=0.6, random_state=42)
+        print("Starting Grid Search for SVM...\n")
+        for kernel in kernels:
+            for C in C_values:
+                for gamma in gamma_values:
 
-            # 2. Create model with current parameters
-            model = svm.SVC(kernel = kernel, C = C, gamma = gamma)
+                    X_train, X_test, y_train, y_test = model_selection.train_test_split(
+                        bunch['data'], bunch['targets'], train_size=0.6, random_state= None)
 
-            # 3. Train & predict
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
+                    model = svm.SVC(kernel = kernel, C = C, gamma = gamma)
+                    model.fit(X_train, y_train)
 
-            # 4. Evaluate
-            acc = np.mean(y_pred == y_test)
-            f1 = f1_score(y_test, y_pred, average='weighted')
+                    y_pred = model.predict(X_test)
 
-            print(f"C={C}, gamma = {gamma} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
+                    acc = np.mean(y_pred == y_test)
+                    f1 = f1_score(y_test, y_pred, average='weighted')
 
-            if f1 > best_f1:
-                best_f1 = f1
-                best_params = {'C': C, 'gamma': gamma}
+                    print(f"Kernel = {kernel}, C={C}, gamma = {gamma} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
 
-    #print("\nBest Hyperparameters (Poly SVM):")
-    #print(f"Best F1 Score: {best_f1:.2f}")
-    #print(f"Best Params: {best_params}")
+                    if f1 > best_f1:
+                        best_f1 = f1
+                        best_params = {'C': C, 'gamma': gamma}
+
+
+    if classifier == 'RF':
+        criteria = ['entropy', 'gini', 'log_loss']
+        n_estimators = [20, 50, 100]
+        max_depths = [1, 10, 20]
+
+        best_f1 = 0
+        best_params = {}
+
+        print("Starting Grid Search for Random Forest...\n")
+        for criterion in criteria:
+            for n_estimator in n_estimators:
+                for max_depth in max_depths:
+
+                    X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                                        train_size = 0.6, random_state = None)
+
+                    model = RandomForestClassifier(criterion = criterion, n_estimators = n_estimator, max_depth = max_depth)
+                    model.fit(X_train, y_train)
+
+                    y_pred = model.predict(X_test)
+
+                    acc = np.mean(y_pred == y_test)
+                    f1 = f1_score(y_test, y_pred, average='weighted')
+
+                    print(f"Criterion = {criterion}, n_estimators={n_estimator}, max_depth = {max_depth} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
+
+                    if f1 > best_f1:
+                        best_f1 = f1
+                        best_params = {'criterion': criterion, 'n_estimators': n_estimator, 'max_depth': max_depth}
+
     return best_params
 
 
@@ -423,17 +442,18 @@ if __name__ == '__main__':
 
     # Classify
     lidar = classify_mj('/pointclouds-500/pointclouds-500')
-    print(lidar['feature_names'])
+    print("Selected features: \n", lidar['feature_names'])
 
     # Optimize hyperparameters
-    best_params = SVM_grid_search(lidar, 'poly')
+    best_params = grid_search(lidar, 'RF')
+    print(best_params)
 
     # Single SMV Run
     #score = perform_svm(lidar, 0.7, 'poly', False)
     #print("Training Set Score: {:.2f}".format(score))
 
     # Multiple SVM Runs
-    learning_curve(lidar, 'svm', best_params['gamma'], best_params['C'], 'poly')
+    #learning_curve(lidar, 'svm', best_params['gamma'], best_params['C'], 'poly')
     """
     out_learning_rate(lidar, perform_svm, 'linear')
     out_learning_rate(lidar, perform_svm, 'sigmoid')
