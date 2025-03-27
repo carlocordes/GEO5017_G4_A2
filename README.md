@@ -6,5 +6,5 @@ Authors:
 * Carlo Cordes
 * Mingjie Teo
 
-To the code specify 'RF' (Random Forest) or 'SVM' (Support Vector Machine) in system arguments.
+To run the code specify 'RF' (Random Forest) or 'SVM' (Support Vector Machine) in system arguments.
 E.g.: python getfeatures.py 'RF'
