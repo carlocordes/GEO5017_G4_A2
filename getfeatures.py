@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -35,10 +36,10 @@ def tsne_graph(bunch):
     plt.title("t-SNE Visualization")
     plt.show()
 
-def visualize_features():
+def visualize_features(bunch):
     # Plot
-    lidar_df = pd.DataFrame(lidar['data'], columns=lidar['feature_names'])
-    pd.plotting.scatter_matrix(lidar_df, c=lidar['targets'], figsize=(15, 15),
+    bunch_df = pd.DataFrame(bunch['data'], columns=bunch['feature_names'])
+    pd.plotting.scatter_matrix(bunch_df, c=bunch['targets'], figsize=(15, 15),
                                marker='o', hist_kwds={'bins': 20}, s=60,
                                alpha=.8)
     plt.show()
@@ -191,7 +192,7 @@ def learning_curve(bunch, method, kernel, par1 = 1, par2 = 0.1):
 
     ratios = np.linspace(0.1, 0.95, 18)
 
-    runs = 100
+    runs = 30
 
     if method == 'SVM':
         for ratio in tqdm(ratios):
@@ -467,7 +468,10 @@ if __name__ == '__main__':
     lidar = classify_mj('/pointclouds-500/pointclouds-500')
     print("Selected features: \n", lidar['feature_names'])
 
-    method = 'RF'
+    #visualize_features(lidar)
+    #tsne_graph(lidar)
+
+    method = sys.argv[1]
 
     if method == 'SVM':
         # SVM
@@ -476,10 +480,11 @@ if __name__ == '__main__':
         print('Optimized Hyperparameters for SVM: ', svm_hyper)
 
         ## Single Output
-        #perform_svm(lidar, 0.75, svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'], True)
-
+        score_svm = perform_svm(lidar, 0.75, svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'], True)
+        print(score_svm)
+        #
         ## Learning Curve
-        learning_curve(lidar, 'SVM', svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'])
+        #learning_curve(lidar, 'SVM', svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'])
 
         plt.title('Learning Curve SVM: {} kernel'.format(svm_hyper['kernel']))
 
@@ -490,10 +495,11 @@ if __name__ == '__main__':
         print('Optimized Hyperparameters for RF: ', rf_hyper)
 
         ## Single Output
-        #perform_rf(lidar, 0.75, rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'], True)
+        score_rf = perform_rf(lidar, 0.75, rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'], True)
+        print(score_rf)
 
         ## Learning Curve
-        learning_curve(lidar, 'RF', rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'])
+        #learning_curve(lidar, 'RF', rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'])
         plt.title('Learning Curve Random Forest: {} criterion'.format(rf_hyper['criterion']))
 
     plt.xlabel('Training Set Ratio')
@@ -502,10 +508,3 @@ if __name__ == '__main__':
     plt.grid()
     plt.show()
 
-    #learning_curve(lidar, 'svm', best_params['kernel'], best_params['gamma'], best_params['C'])
-    #visualize_features()
-    #tsne_graph(lidar)
-
-    # Single RF Run
-    #rf_score = perform_rf(lidar, 0.7, 'entropy', True)
-    #print("Random Forest Training Set Score: {:.2}".format(rf_score))
