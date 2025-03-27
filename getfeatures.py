@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from tqdm import tqdm
 
 from scipy.spatial import ConvexHull
 
@@ -132,9 +133,8 @@ def perform_svm(bunch, ratio, kernel = 'rbf', gamma = 1, C = 0.1, print_cf = Tru
 
     if print_cf:
         # Compute the confusion matrix
+        print('Confusion Matrix')
         cm = confusion_matrix(y_test, svm_pred)
-        #print(cm)
-
         # Plot the confusion matrix
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=lidar['target_names'])
         disp.plot(cmap=plt.cm.Blues)
@@ -143,7 +143,7 @@ def perform_svm(bunch, ratio, kernel = 'rbf', gamma = 1, C = 0.1, print_cf = Tru
 
     return score
 
-def perform_rf(bunch, ratio, kernel, print_cf = True):
+def perform_rf(bunch, ratio, criterion, n_estimators = 20, max_depth = 10, print_cf = True, random = 42):
     """
     Performs Random Forest Classification at given training ratio
     :param bunch: data to perform RF on
@@ -152,16 +152,21 @@ def perform_rf(bunch, ratio, kernel, print_cf = True):
     :return:
     """
     X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
-                                                                        train_size = ratio)
+                                                                        train_size = ratio, random_state = random)
 
-    clf = RandomForestClassifier(n_estimators=100, criterion= kernel)
-    clf.fit(X_train, y_train)
-    rf_pred = clf.predict(X_test)
+    model = RandomForestClassifier(criterion= criterion, n_estimators = n_estimators, max_depth = max_depth)
+    model.fit(X_train, y_train)
+    rf_pred = model.predict(X_test)
     score = np.mean(rf_pred == y_test)
 
     if print_cf:
-        print(confusion_matrix(y_true = y_test, y_pred = rf_pred))
-
+        print('Confusion Matrix')
+        cm = confusion_matrix(y_true = y_test, y_pred = rf_pred)
+        # Plot the confusion matrix
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=lidar['target_names'])
+        disp.plot(cmap=plt.cm.Blues)
+        plt.title('Confusion Matrix RF ' + criterion)
+        plt.show()
     return score
 
 def out_learning_rate(bunch, method, gamma = 1, C = 0.1, kernel = False):
@@ -179,36 +184,55 @@ def out_learning_rate(bunch, method, gamma = 1, C = 0.1, kernel = False):
     # Send to plot
     plt.plot(ratios, set_scores, label = kernel)
 
-def learning_curve(bunch, method, par1 = 1, par2 = 0.1, kernel = False):
+def learning_curve(bunch, method, kernel, par1 = 1, par2 = 0.1):
 
     true_errors = [] # True error -> based on testing data
     app_errors = [] # Apparent error -> based on training data
+
     ratios = np.linspace(0.1, 0.95, 18)
 
-    iterations = 10
-    for ratio in ratios:
-        true_score = 0
-        app_score = 0
-        for i in range(iterations):
-            X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
-                                                                                train_size = ratio, random_state = None)
+    runs = 100
 
-            model = svm.SVC(kernel = kernel, gamma = par1, C = par2).fit(X_train, y_train)
+    if method == 'SVM':
+        for ratio in tqdm(ratios):
 
-            true_error = 1 - np.mean(y_test == model.predict(X_test))
-            app_error = 1 - np.mean(y_train == model.predict(X_train))
+            app_error = 0
+            true_error = 0
+            for i in range(runs):
+                X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                                    train_size = ratio, random_state = None)
 
-            true_score += true_error
-            app_score += app_error
+                model = svm.SVC(kernel = kernel, gamma = par1, C = par2).fit(X_train, y_train)
 
-        true_score /= iterations
-        app_score /= iterations
+                app_error += 1 - np.mean(model.predict(X_train) == y_train)
+                true_error += 1 - np.mean(model.predict(X_test) == y_test)
 
-        true_errors.append(true_score)
-        app_errors.append(app_score)
+            app_error /= runs
+            true_error /= runs
+            app_errors.append(app_error)
+            true_errors.append(true_error)
 
-    plt.plot(ratios, true_errors, label= "True error")
-    plt.plot(ratios, app_errors, label = " Apparent error")
+    elif method == 'RF':
+        for ratio in tqdm(ratios):
+
+            app_error = 0
+            true_error = 0
+            for i in range(runs):
+                X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
+                                                                                    train_size = ratio, random_state = None)
+
+                model = RandomForestClassifier(criterion = kernel, n_estimators = par1, max_depth = par2).fit(X_train, y_train)
+
+                app_error += 1 - np.mean(model.predict(X_train) == y_train)
+                true_error += 1 - np.mean(model.predict(X_test) == y_test)
+
+            app_error /= runs
+            true_error /= runs
+            app_errors.append(app_error)
+            true_errors.append(true_error)
+
+    plt.plot(ratios, true_errors, label = 'True Error')
+    plt.plot(ratios, app_errors, label = 'Apparent Error')
 
 def classify(pathname):
 
@@ -382,13 +406,13 @@ def grid_search(bunch, classifier):
         best_f1 = 0
         best_params = {}
 
-        print("Starting Grid Search for SVM...\n")
-        for kernel in kernels:
+        print("Starting Grid Search for SVM...")
+        for kernel in tqdm(kernels):
             for C in C_values:
                 for gamma in gamma_values:
 
                     X_train, X_test, y_train, y_test = model_selection.train_test_split(
-                        bunch['data'], bunch['targets'], train_size=0.6, random_state= None)
+                        bunch['data'], bunch['targets'], train_size=0.6, random_state= 42)
 
                     model = svm.SVC(kernel = kernel, C = C, gamma = gamma)
                     model.fit(X_train, y_train)
@@ -398,28 +422,28 @@ def grid_search(bunch, classifier):
                     acc = np.mean(y_pred == y_test)
                     f1 = f1_score(y_test, y_pred, average='weighted')
 
-                    print(f"Kernel = {kernel}, C={C}, gamma = {gamma} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
+                    #print(f"Kernel = {kernel}, C={C}, gamma = {gamma} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
 
                     if f1 > best_f1:
                         best_f1 = f1
-                        best_params = {'C': C, 'gamma': gamma}
+                        best_params = {'kernel': kernel,'C': C, 'gamma': gamma}
 
 
-    if classifier == 'RF':
+    elif classifier == 'RF':
         criteria = ['entropy', 'gini', 'log_loss']
         n_estimators = [20, 50, 100]
-        max_depths = [1, 10, 20]
+        max_depths = [1, 10, 20, 30]
 
         best_f1 = 0
         best_params = {}
 
-        print("Starting Grid Search for Random Forest...\n")
-        for criterion in criteria:
+        print("Starting Grid Search for Random Forest...")
+        for criterion in tqdm(criteria):
             for n_estimator in n_estimators:
                 for max_depth in max_depths:
 
                     X_train, X_test, y_train, y_test = model_selection.train_test_split(bunch['data'], bunch['targets'],
-                                                                                        train_size = 0.6, random_state = None)
+                                                                                        train_size = 0.6, random_state = 42)
 
                     model = RandomForestClassifier(criterion = criterion, n_estimators = n_estimator, max_depth = max_depth)
                     model.fit(X_train, y_train)
@@ -429,7 +453,7 @@ def grid_search(bunch, classifier):
                     acc = np.mean(y_pred == y_test)
                     f1 = f1_score(y_test, y_pred, average='weighted')
 
-                    print(f"Criterion = {criterion}, n_estimators={n_estimator}, max_depth = {max_depth} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
+                    #print(f"Criterion = {criterion}, n_estimators={n_estimator}, max_depth = {max_depth} -> Accuracy: {acc:.2f}, F1 Score: {f1:.2f}")
 
                     if f1 > best_f1:
                         best_f1 = f1
@@ -439,42 +463,49 @@ def grid_search(bunch, classifier):
 
 
 if __name__ == '__main__':
-
     # Classify
     lidar = classify_mj('/pointclouds-500/pointclouds-500')
     print("Selected features: \n", lidar['feature_names'])
 
-    # Optimize hyperparameters
-    best_params = grid_search(lidar, 'RF')
-    print(best_params)
+    method = 'RF'
 
-    # Single SMV Run
-    #score = perform_svm(lidar, 0.7, 'poly', False)
-    #print("Training Set Score: {:.2f}".format(score))
+    if method == 'SVM':
+        # SVM
+        ## Optimize hyperparameters
+        svm_hyper = grid_search(lidar, 'SVM')
+        print('Optimized Hyperparameters for SVM: ', svm_hyper)
 
-    # Multiple SVM Runs
-    #learning_curve(lidar, 'svm', best_params['gamma'], best_params['C'], 'poly')
-    """
-    out_learning_rate(lidar, perform_svm, 'linear')
-    out_learning_rate(lidar, perform_svm, 'sigmoid')
-    out_learning_rate(lidar, perform_svm, 'rbf')
-    """
+        ## Single Output
+        #perform_svm(lidar, 0.75, svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'], True)
 
+        ## Learning Curve
+        learning_curve(lidar, 'SVM', svm_hyper['kernel'], svm_hyper['gamma'], svm_hyper['C'])
 
+        plt.title('Learning Curve SVM: {} kernel'.format(svm_hyper['kernel']))
+
+    elif method == 'RF':
+        #RF
+        ## Optimize hyperparameters
+        rf_hyper = grid_search(lidar, 'RF')
+        print('Optimized Hyperparameters for RF: ', rf_hyper)
+
+        ## Single Output
+        #perform_rf(lidar, 0.75, rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'], True)
+
+        ## Learning Curve
+        learning_curve(lidar, 'RF', rf_hyper['criterion'], rf_hyper['n_estimators'], rf_hyper['max_depth'])
+        plt.title('Learning Curve Random Forest: {} criterion'.format(rf_hyper['criterion']))
+
+    plt.xlabel('Training Set Ratio')
+    plt.ylabel('Training Set Score')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    #learning_curve(lidar, 'svm', best_params['kernel'], best_params['gamma'], best_params['C'])
     #visualize_features()
     #tsne_graph(lidar)
 
     # Single RF Run
     #rf_score = perform_rf(lidar, 0.7, 'entropy', True)
     #print("Random Forest Training Set Score: {:.2}".format(rf_score))
-
-    # Multiple RF Runs
-    #out_learning_rate(lidar, perform_rf, 'entropy')
-    #out_learning_rate(lidar, perform_rf, 'gini')
-
-    plt.title('Learning Curve')
-    plt.xlabel('Training Set Ratio')
-    plt.ylabel('Training Set Score')
-    plt.legend()
-    plt.grid()
-    plt.show()
